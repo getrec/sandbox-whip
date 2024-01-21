@@ -1,0 +1,9 @@
+.DS_Store
+
+/target
+/output
+
+.env
+.env.local
+.env.*
+!.env.template
