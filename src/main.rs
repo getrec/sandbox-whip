@@ -55,7 +55,7 @@ async fn main() {
                     println!(
                         "{:} [{:}] {:} {:} {:}",
                         Utc::now().to_rfc3339(),
-                        "CREATED",
+                        "RX:CREATED",
                         &account_id,
                         &player_id,
                         &recording_id
@@ -77,7 +77,7 @@ async fn main() {
                     println!(
                         "{:} [{:}] {:} {:} {:}",
                         Utc::now().to_rfc3339(),
-                        "RECORDING",
+                        "RX:RECORDING",
                         &account_id,
                         &player_id,
                         &recording_id
@@ -106,7 +106,7 @@ async fn main() {
                     println!(
                         "{:} [{:}] {:} {:} {:}",
                         Utc::now().to_rfc3339(),
-                        "PROCESSING",
+                        "RX:PROCESSING",
                         &account_id,
                         &player_id,
                         &recording_id
@@ -165,63 +165,67 @@ async fn main() {
                         ])
                         .output()
                         .unwrap();
-                    let duration_seconds = String::from_utf8(probe.stdout).unwrap();
-                    let duration_seconds = duration_seconds.trim();
-                    let duration_seconds = duration_seconds.parse::<f32>().unwrap();
-                    let end_timestamp =
-                        timestamp + Duration::milliseconds((duration_seconds * 1000.0) as i64);
 
-                    // let’s upload it
-                    let body = aws_sdk_s3::primitives::ByteStream::from_path(mp4_path.as_str())
-                        .await
-                        .unwrap();
-                    let _ = &s3
-                        .put_object()
-                        .bucket(env::var("S3_BUCKET").unwrap())
-                        .key(r2_path.as_str())
-                        .content_type("video/mp4")
-                        .body(body)
-                        .send()
+                    if let Ok(duration_seconds) = String::from_utf8(probe.stdout)
+                        .unwrap_or("".into())
+                        .trim()
+                        .parse::<f32>()
+                    {
+                        let end_timestamp =
+                            timestamp + Duration::milliseconds((duration_seconds * 1000.0) as i64);
+
+                        // let’s upload it
+                        let body = aws_sdk_s3::primitives::ByteStream::from_path(mp4_path.as_str())
+                            .await
+                            .unwrap();
+                        let _ = &s3
+                            .put_object()
+                            .bucket(env::var("S3_BUCKET").unwrap())
+                            .key(r2_path.as_str())
+                            .content_type("video/mp4")
+                            .body(body)
+                            .send()
+                            .await;
+
+                        // let’s update it
+                        println!(
+                            "{:} [{:}] {:} {:} {:}",
+                            Utc::now().to_rfc3339(),
+                            "RX:COMPLETED",
+                            &account_id,
+                            &player_id,
+                            &recording_id
+                        );
+                        let _ = sqlx::query("
+                            insert into recordings (recording_id, player_id, account_id, start_tstamp, end_tstamp, state)
+                            values ($1, $2, $3, $4::timestamptz, $5::timestamptz, $6)
+                            on conflict (recording_id)
+                            do update set player_id = $2, account_id = $3, start_tstamp = $4::timestamptz, end_tstamp = $5::timestamptz, state = $6
+                        ").bind(&recording_id)
+                        .bind(&player_id)
+                        .bind(&account_id)
+                        .bind(timestamp.to_rfc3339())
+                        .bind(end_timestamp.to_rfc3339())
+                        .bind("COMPLETED")
+                        .fetch_optional(&postgres)
                         .await;
 
-                    // let’s update it
-                    println!(
-                        "{:} [{:}] {:} {:} {:}",
-                        Utc::now().to_rfc3339(),
-                        "COMPLETED",
-                        &account_id,
-                        &player_id,
-                        &recording_id
-                    );
-                    let _ = sqlx::query("
-                        insert into recordings (recording_id, player_id, account_id, start_tstamp, end_tstamp, state)
-                        values ($1, $2, $3, $4::timestamptz, $5::timestamptz, $6)
-                        on conflict (recording_id)
-                        do update set player_id = $2, account_id = $3, start_tstamp = $4::timestamptz, end_tstamp = $5::timestamptz, state = $6
-                    ").bind(&recording_id)
-                    .bind(&player_id)
-                    .bind(&account_id)
-                    .bind(timestamp.to_rfc3339())
-                    .bind(end_timestamp.to_rfc3339())
-                    .bind("COMPLETED")
-                    .fetch_optional(&postgres)
-                    .await;
-
-                    // let’s clean up
-                    if env::var("GETREC_CLEAN_RAW_FILES")
-                        .unwrap_or(String::from("true"))
-                        .parse::<bool>()
-                        .unwrap()
-                    {
-                        let _ = std::fs::remove_file(opus_path.as_str());
-                        let _ = std::fs::remove_file(h264_path.as_str());
-                    }
-                    if env::var("GETREC_CLEAN_PACKAGED_FILES")
-                        .unwrap_or(String::from("true"))
-                        .parse::<bool>()
-                        .unwrap()
-                    {
-                        let _ = std::fs::remove_file(mp4_path.as_str());
+                        // let’s clean up
+                        if env::var("GETREC_CLEAN_RAW_FILES")
+                            .unwrap_or(String::from("true"))
+                            .parse::<bool>()
+                            .unwrap()
+                        {
+                            let _ = std::fs::remove_file(opus_path.as_str());
+                            let _ = std::fs::remove_file(h264_path.as_str());
+                        }
+                        if env::var("GETREC_CLEAN_PACKAGED_FILES")
+                            .unwrap_or(String::from("true"))
+                            .parse::<bool>()
+                            .unwrap()
+                        {
+                            let _ = std::fs::remove_file(mp4_path.as_str());
+                        }
                     }
                 }
             }
