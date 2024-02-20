@@ -181,11 +181,12 @@ fn run(
                                 let _ = opus_writer.write_all(&page);
                             }
                             "video" => {
+                                let is_keyframe = util::get_is_key_frame(&d.data[4..8])
+                                    || util::get_is_key_frame(&d.data[10..14]);
                                 if !has_keyframe {
                                     // whip-go: 4..8
                                     // obs: 10..14
-                                    has_keyframe = util::get_is_key_frame(&d.data[4..8])
-                                        || util::get_is_key_frame(&d.data[10..14]);
+                                    has_keyframe = is_keyframe;
                                     if has_keyframe {
                                         // first keyframe
                                         keyframe_ts = Utc::now();
@@ -199,12 +200,17 @@ fn run(
                                     }
                                 }
                                 if has_keyframe {
+                                    if is_keyframe {
+                                        last_keyframe = d.data.clone();
+                                    }
                                     match d.contiguous {
                                         true => {
                                             let _ = h264_writer.write_all(&d.data);
                                         }
                                         false => {
+                                            // insert last keyframe to compensate for the missing frame
                                             let _ = h264_writer.write_all(&last_keyframe);
+                                            let _ = h264_writer.write_all(&d.data);
                                         }
                                     }
                                 }
