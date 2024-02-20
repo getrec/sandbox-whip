@@ -44,7 +44,9 @@ pub async fn handle_offer(
     let account_id = account_id.clone();
     let offer = SdpOffer::from_sdp_string(body.as_str()).expect("parse offer SDP");
 
-    let mut rtc = RtcConfig::new().clear_codecs();
+    let mut rtc = RtcConfig::new()
+        .clear_codecs()
+        .set_reordering_size_video(240);
     let config = rtc.codec_config();
     config.enable_h264(true);
     config.enable_opus(true);
